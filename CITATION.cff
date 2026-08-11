@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use cordiag, please cite this software release."
+title: "cordiag"
+version: 0.1.0
+date-released: 2026-08-11
+authors:
+  - family-names: Gong
+    given-names: Zhuozhi
+license: MIT
+repository-code: "https://github.com/brvnw2d5tk-ctrl/cordiag"

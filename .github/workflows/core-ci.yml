@@ -1,0 +1,26 @@
+name: Core CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  release-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package and development dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Verify GitHub release allowlist
+        run: python tools/verify_github_release_allowlist.py .
+      - name: Run test suite
+        run: python -m pytest tests -v -p no:cacheprovider
+      - name: Run deterministic synthetic smoke test
+        run: python scripts/run_synthetic_smoke.py --seed 42
+      - name: Verify package import
+        run: python -c "import cordiag"
+      - name: Verify command-line interface
+        run: cordiag --help
