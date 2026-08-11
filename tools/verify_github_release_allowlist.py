@@ -36,6 +36,9 @@ def verify_tree(root: Path) -> list[str]:
     def inspect(directory: Path) -> None:
         for path in directory.iterdir():
             relative_path = path.relative_to(root).as_posix()
+            # Git metadata is not part of the versioned release tree.
+            if directory == root and relative_path == ".git":
+                continue
             if _is_reparse_point(path):
                 problems.append(f"reparse point: {relative_path}")
                 continue
