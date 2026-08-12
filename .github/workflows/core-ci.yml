@@ -23,4 +23,15 @@ jobs:
   wheel-e2e:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "wheel job syntax is valid"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install wheel build tools
+        run: python -m pip install --upgrade pip build pytest
+      - name: Build wheel outside checkout
+        run: |
+          mkdir -p "$RUNNER_TEMP/wheel-source"
+          cp -R "$GITHUB_WORKSPACE"/. "$RUNNER_TEMP/wheel-source"
+          cd "$RUNNER_TEMP/wheel-source"
+          python -m build --wheel --outdir "$RUNNER_TEMP/dist"
