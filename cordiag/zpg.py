@@ -23,6 +23,15 @@ from .m1 import m1_loocv as _m1_loocv
 _CV_ALPHAS = [0.01, 0.1, 1.0, 10.0, 100.0]
 
 
+def _upper_tail_permutation_pvalue(null_values, observed):
+    """Continuity-corrected upper-tail p-value over finite null draws."""
+    valid = np.asarray(null_values, dtype=float)
+    valid = valid[np.isfinite(valid)]
+    if len(valid) == 0 or not np.isfinite(observed):
+        return np.nan
+    return float((np.sum(valid >= observed) + 1) / (len(valid) + 1))
+
+
 def set_seed(seed=42):
     """设置全局 RNG 种子, 保证可复现。
 
@@ -321,7 +330,7 @@ def compute_rank_zPG(R_modules, P, design, n_perms, seed=None):
         # No valid permutation produced a rho — no null information at all
         p_val = np.nan
     else:
-        p_val = (np.sum(perm_rhos >= rho_obs) + 1) / (n_perms + 1)
+        p_val = _upper_tail_permutation_pvalue(perm_rhos, rho_obs)
     perm_q2_std = np.std(perm_Q2s)
     if perm_q2_std < 1e-10 or np.isnan(perm_q2_std):
         zPG_Q2 = np.nan
@@ -334,7 +343,7 @@ def compute_rank_zPG(R_modules, P, design, n_perms, seed=None):
         n_s = (strata == s).sum()
         if n_s >= 2:
             min_p = min(min_p, 1.0 / (math.factorial(n_s) if n_s <= 10 else 1000))
-    min_p = max(min_p, 1.0 / (n_perms + 1))  # bounded by Monte Carlo resolution
+    min_p = max(min_p, 1.0 / (len(perm_rhos) + 1))
 
     return {
         'zPG_rank': zPG_rank,
@@ -412,14 +421,14 @@ def compute_rank_zPG_partial(R_modules, P, design, n_perms, seed=None, n_pcs=3):
     elif len(perm_rhos) == 0:
         p_val = np.nan
     else:
-        p_val = (np.sum(perm_rhos >= rho_obs) + 1) / (n_perms + 1)
+        p_val = _upper_tail_permutation_pvalue(perm_rhos, rho_obs)
 
     min_p = 1.0
     for s in unique_strata:
         n_s = (strata == s).sum()
         if n_s >= 2:
             min_p = min(min_p, 1.0 / (math.factorial(n_s) if n_s <= 10 else 1000))
-    min_p = max(min_p, 1.0 / (n_perms + 1))  # bounded by Monte Carlo resolution
+    min_p = max(min_p, 1.0 / (len(perm_rhos) + 1))
 
     return {
         'zPG_partial': zPG_partial,
@@ -507,7 +516,7 @@ def _zpg_with_cv(R_modules, P, design, n_folds, n_perms, seed=42, actual_perms=N
         # (2026-08-01 edge-case guard).
         p_val = np.nan
     else:
-        p_val = (np.sum(perm_rhos >= rho_obs) + 1) / (actual_perms + 1)
+        p_val = _upper_tail_permutation_pvalue(perm_rhos, rho_obs)
     q2_std = np.std(perm_Q2s)
     zPG_Q2 = (Q2_obs - np.mean(perm_Q2s)) / q2_std if q2_std > 1e-10 and not np.isnan(q2_std) else np.nan
 
@@ -673,13 +682,23 @@ def fdr_bh(p_values):
 # Implementation detail.
 # ---------------------------------------------------------------------------
 
-def decide(zpg, p_fdr, n_per_condition, zpg_go=1.0, fdr_go=0.1, n_min=12):
-    """Classify a result using paired-gain, adjusted p-value, and sample-size thresholds."""
+def decide(
+    zpg,
+    p_fdr,
+    n_per_condition=None,
+    zpg_go=1.0,
+    fdr_go=0.1,
+    n_min=12,
+    design_identifiable=True,
+):
+    """Return NOT_IDENTIFIABLE_DESIGN, GO, INCONCLUSIVE, or NO_GO."""
+    if not design_identifiable:
+        return "NOT_IDENTIFIABLE_DESIGN"
     if zpg > zpg_go and p_fdr < fdr_go:
-        return 'GO'
-    if zpg > 0 and n_per_condition < n_min:
-        return 'INCONCLUSIVE'
-    return 'NO_GO'
+        return "GO"
+    if np.isfinite(zpg) and zpg > 0:
+        return "INCONCLUSIVE"
+    return "NO_GO"
 
 
 def decide_legacy(zpg, p_fdr, zpg_go=1.0, fdr_go=0.1):

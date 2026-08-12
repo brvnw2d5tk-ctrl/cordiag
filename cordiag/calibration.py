@@ -54,7 +54,8 @@ import os
 #     见 m1.py docstring 不变量 #2)
 # 调用语义零变化 —— 等价性已由 the package specification §5.4 验证。
 from cordiag.tg import (_compute_stratum_means_loocv, _m1_loocv, _m1_train_test,
-                     _compute_q2_within_matched, _compute_q2_crossed_matched,
+                     _compute_q2_within_matched, _compute_q2_cross_matched,
+                     _compute_q2_crossed_matched,
                      _spearmanr)
 
 
@@ -572,17 +573,26 @@ def _compute_q2_components(
     result.ridge_alpha_within_b = float(within_alpha)
 
     # ── Q²_a→b: train M1 on source (a), predict on target (b) ──
-    preds_ab = _m1_train_test(
-        protein_a, rna_a, strata_a,
-        protein_b, rna_b, strata_b,
-        _RIDGE_ALPHAS.tolist(),
-    )
-    valid_ab = ~np.isnan(preds_ab)
-    if valid_ab.sum() >= 1:
-        mse_ab = float(np.mean((preds_ab[valid_ab] - protein_b[valid_ab]) ** 2))
-        result.q2_a_to_b = float(1.0 - mse_ab / mse_stratum_b)
+    if train_size >= 8 and n_b - train_size >= 3:
+        q2_ab, _ = _compute_q2_cross_matched(
+            protein_a, rna_a, strata_a,
+            protein_b, rna_b, strata_b,
+            train_size, mse_stratum_b, _RIDGE_ALPHAS.tolist(),
+            n_subsamples=n_subsamples, seed=sim_seed,
+        )
+        result.q2_a_to_b = float(q2_ab)
     else:
-        result.q2_a_to_b = float('nan')
+        preds_ab = _m1_train_test(
+            protein_a, rna_a, strata_a,
+            protein_b, rna_b, strata_b,
+            _RIDGE_ALPHAS.tolist(),
+        )
+        valid_ab = ~np.isnan(preds_ab)
+        if valid_ab.sum() >= 1:
+            mse_ab = float(np.mean((preds_ab[valid_ab] - protein_b[valid_ab]) ** 2))
+            result.q2_a_to_b = float(1.0 - mse_ab / mse_stratum_b)
+        else:
+            result.q2_a_to_b = float('nan')
 
     # ── Q²_crossed: matched-subsample pooled (a+b), evaluate on target ──
     rna_pooled = np.vstack([rna_a, rna_b])
