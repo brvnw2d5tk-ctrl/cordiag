@@ -117,4 +117,24 @@ def test_ci_runs_release_contract():
     workflow = CI_WORKFLOW_PATH.read_text(encoding="utf-8")
 
     assert "verify_github_release_allowlist.py" in workflow
-    assert "run_synthetic_smoke.py --seed 42" in workflow
+    assert "run_synthetic_smoke.py" in workflow
+    assert "--seed 42" in workflow
+
+
+def test_ci_verifies_boundary_before_any_build_or_install():
+    workflow = CI_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert workflow.index("verify_github_release_allowlist.py") < workflow.index("python -m build --wheel")
+    assert "pip install -e" not in workflow
+
+
+def test_ci_installs_and_exercises_an_isolated_wheel():
+    workflow = CI_WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert "python -m build --wheel" in workflow
+    assert "RUNNER_TEMP" in workflow
+    assert "wheel-source" in workflow
+    assert "zpg --config" in workflow
+    assert "tg --config" in workflow
+    assert "examples/zpg_synthetic.yaml" in workflow
+    assert "examples/tg_synthetic.yaml" in workflow

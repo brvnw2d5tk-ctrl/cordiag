@@ -864,6 +864,14 @@ def _compute_q2_crossed_matched(
 # Permutation test
 # ═══════════════════════════════════════════════════════════════════
 
+def _empirical_upper_tail_pvalue(null_values: np.ndarray, observed: float) -> float:
+    """Continuity-corrected upper-tail p-value for positive TG loss."""
+    valid = np.asarray(null_values, dtype=float)
+    valid = valid[np.isfinite(valid)]
+    if len(valid) == 0 or not np.isfinite(observed):
+        return 1.0
+    return float((np.sum(valid >= observed) + 1) / (len(valid) + 1))
+
 def _permutation_test_tg(
     P_source: np.ndarray,
     P_target: np.ndarray,
@@ -883,6 +891,7 @@ def _permutation_test_tg(
     cv_mode: str = 'loocv',
     n_subsamples: int = 100,
     n_source: int = 0,
+    train_size: Optional[int] = None,
     matched_seed: Optional[int] = None,
 ) -> Tuple[float, float, float, float, float, np.ndarray]:
     """
@@ -954,6 +963,7 @@ def _permutation_test_tg(
     # Pool data
     n_source = len(P_source)
     n_target = len(P_target)
+    matched_train_size = int(train_size if train_size is not None else n_source)
 
     P_pooled = np.concatenate([P_source, P_target]).astype(np.float64)
     X_pooled = np.concatenate([X_source, X_target], axis=0).astype(np.float64)
@@ -984,7 +994,7 @@ def _permutation_test_tg(
     null_rna = []
     n_valid_perms = 0
 
-    for _ in range(n_permutations):
+    for permutation_index in range(n_permutations):
         # Shuffle pooled samples (restricted permutation; positions fixed)
         if pooled_groups is not None:
             # Block-restricted permutation: shuffle sample indices within
@@ -1022,33 +1032,41 @@ def _permutation_test_tg(
                 pooled_groups[tgt_pos]
             ])
 
-        # --- Within-b: LOOCV (forced; matched_subsample NOT used in the null) ---
-        q2_w, mse_s_b, _, _, _ = _compute_q2_within(
-            P_pt, X_pt, strata_pt, cv_alphas, groups_target=pt_groups)
-        if np.isnan(q2_w) or mse_s_b < 1e-10:
-            continue
-
-        # --- Q²_a→b: train on permuted source, predict on permuted target ---
-        q2_ab, _ = _compute_q2_cross(
-            P_ps, X_ps, strata_ps,
-            P_pt, X_pt, strata_pt,
-            mse_s_b, cv_alphas,
-        )
-        if np.isnan(q2_ab):
-            continue
-
-        # --- Crossed: pool permuted partitions, evaluate on permuted target
-        #     (LOOCV forced, same fixed fold positions) ---
         P_cross = np.concatenate([P_ps, P_pt])
         X_cross = np.concatenate([X_ps, X_pt], axis=0)
         strata_cross = np.concatenate([strata_ps, strata_pt])
         tgt_idx = np.arange(n_source, n_source + len(P_pt))
-
-        q2_cross, _, _ = _compute_q2_crossed(
-            P_cross, X_cross, strata_cross, tgt_idx, mse_s_b, cv_alphas,
-            fixed_alpha=1.0,
-            groups_pooled=pooled_perm_groups,
-        )
+        if cv_mode == 'matched_subsample':
+            permutation_seed = (0 if matched_seed is None else int(matched_seed)) + 100000 + permutation_index
+            q2_w, _, mse_s_b, _, _ = _compute_q2_within_matched(
+                P_pt, X_pt, strata_pt, matched_train_size, cv_alphas,
+                n_subsamples=n_subsamples, seed=permutation_seed, groups_target=pt_groups,
+            )
+            if np.isnan(q2_w) or mse_s_b < 1e-10:
+                continue
+            q2_ab, _ = _compute_q2_cross_matched(
+                P_ps, X_ps, strata_ps, P_pt, X_pt, strata_pt,
+                matched_train_size, mse_s_b, cv_alphas,
+                n_subsamples=n_subsamples, seed=permutation_seed,
+            )
+            q2_cross, _, _ = _compute_q2_crossed_matched(
+                P_cross, X_cross, strata_cross, tgt_idx, matched_train_size,
+                mse_s_b, cv_alphas, n_subsamples=n_subsamples, seed=permutation_seed,
+            )
+        else:
+            q2_w, mse_s_b, _, _, _ = _compute_q2_within(
+                P_pt, X_pt, strata_pt, cv_alphas, groups_target=pt_groups)
+            if np.isnan(q2_w) or mse_s_b < 1e-10:
+                continue
+            q2_ab, _ = _compute_q2_cross(
+                P_ps, X_ps, strata_ps, P_pt, X_pt, strata_pt, mse_s_b, cv_alphas,
+            )
+            q2_cross, _, _ = _compute_q2_crossed(
+                P_cross, X_cross, strata_cross, tgt_idx, mse_s_b, cv_alphas,
+                fixed_alpha=1.0, groups_pooled=pooled_perm_groups,
+            )
+        if np.isnan(q2_ab):
+            continue
         if np.isnan(q2_cross):
             continue
 
@@ -1072,13 +1090,9 @@ def _permutation_test_tg(
         # Insufficient valid permutations — return null p-values
         return 1.0, 1.0, 1.0, 0.05, null_raw
 
-    # Empirical p-values (one-sided upper, |observed| ≥ |null|)
-    p_raw = float((np.sum(np.abs(null_raw) >= np.abs(tg_raw_obs)) + 1) /
-                  (n_valid_perms + 1))
-    p_design = float((np.sum(np.abs(null_design) >= np.abs(tg_design_obs)) + 1) /
-                     (n_valid_perms + 1))
-    p_rna = float((np.sum(np.abs(null_rna) >= np.abs(tg_rna_obs)) + 1) /
-                  (n_valid_perms + 1))
+    p_raw = _empirical_upper_tail_pvalue(null_raw, tg_raw_obs)
+    p_design = _empirical_upper_tail_pvalue(null_design, tg_design_obs)
+    p_rna = _empirical_upper_tail_pvalue(null_rna, tg_rna_obs)
 
     # Theta: simulation-calibrated threshold
     theta = float(max(0.05, np.percentile(null_raw, 95)))
@@ -1162,25 +1176,33 @@ def _bootstrap_ci_tg(
         )
 
     # ── Q²_a→b: train on source, predict on target ──
-    preds_ab = _m1_train_test(
-        P_source, X_source, source_strata,
-        P_target, X_target, target_strata,
-        cv_alphas,
-    )
-    valid_ab = ~np.isnan(preds_ab)
-    if valid_ab.sum() < 1:
-        return float('nan'), float('nan'), float('nan')
-
-    mse_ab_orig = float(np.mean((preds_ab[valid_ab] - P_target[valid_ab]) ** 2))
-    q2_ab_orig = 1.0 - mse_ab_orig / mse_stratum_b if mse_stratum_b > 1e-10 else float('nan')
+    matched_mode = cv_mode == 'matched_subsample' and train_size >= 8 and n_target - train_size >= 3
+    if matched_mode:
+        q2_ab_orig, _ = _compute_q2_cross_matched(
+            P_source, X_source, source_strata,
+            P_target, X_target, target_strata,
+            train_size, mse_stratum_b, cv_alphas,
+            n_subsamples=n_subsamples, seed=matched_seed,
+        )
+    else:
+        preds_ab = _m1_train_test(
+            P_source, X_source, source_strata,
+            P_target, X_target, target_strata,
+            cv_alphas,
+        )
+        valid_ab = ~np.isnan(preds_ab)
+        if valid_ab.sum() < 1:
+            return float('nan'), float('nan'), float('nan')
+        mse_ab_orig = float(np.mean((preds_ab[valid_ab] - P_target[valid_ab]) ** 2))
+        q2_ab_orig = 1.0 - mse_ab_orig / mse_stratum_b if mse_stratum_b > 1e-10 else float('nan')
     tg_orig = q2_w_orig - q2_ab_orig
 
     # Bootstrap — paired out-of-bag design (see docstring)
     tg_boot = np.full(n_bootstrap, np.nan, dtype=np.float64)
     n_oob_min = 5
     for b in range(n_bootstrap):
-        t_idx = rng.integers(0, n_target, size=n_target)
-        s_idx = rng.integers(0, len(P_source), size=len(P_source))
+        t_idx = rng.integers(0, n_target, size=train_size if matched_mode else n_target)
+        s_idx = rng.integers(0, len(P_source), size=train_size if matched_mode else len(P_source))
         oob_idx = np.array(sorted(set(range(n_target)) - set(t_idx.tolist())))
         if len(oob_idx) < n_oob_min:
             continue
@@ -1669,6 +1691,7 @@ def _compute_tg_pair(
         cv_mode=cv_mode,
         n_subsamples=n_subsamples,
         n_source=n_source,
+        train_size=train_size,
         matched_seed=per_pair_seed,
     )
 

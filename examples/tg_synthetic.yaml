@@ -1,0 +1,8 @@
+rna_csv: synthetic_rna.csv
+protein_csv: synthetic_protein.csv
+design_csv: synthetic_design.csv
+n_permutations: 4
+n_bootstrap: 4
+n_subsamples: 3
+min_n: 8
+seed: 42

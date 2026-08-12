@@ -1,0 +1,7 @@
+rna_csv: synthetic_rna.csv
+protein_csv: synthetic_zpg_protein.csv
+design_csv: synthetic_design.csv
+protein_column: protein
+n_perms: 8
+seed: 42
+cv: loocv
