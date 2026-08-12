@@ -38,7 +38,8 @@ jobs:
       - name: Create isolated wheel environment
         run: python -m venv "$RUNNER_TEMP/venv"
       - name: Install built wheel and test runner
-        run: "$RUNNER_TEMP/venv/bin/python" -m pip install "$RUNNER_TEMP"/dist/*.whl pytest
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -m pip install "$RUNNER_TEMP"/dist/*.whl pytest
       - name: Run package tests
         run: |
           cd "$RUNNER_TEMP"
