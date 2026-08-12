@@ -2,8 +2,6 @@ name: Core CI
 
 on:
   push:
-  pull_request:
-  workflow_dispatch:
 
 jobs:
   release-boundary:
