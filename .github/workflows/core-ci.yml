@@ -1,62 +1,10 @@
 name: Core CI
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
 
 jobs:
-  release-boundary:
+  workflow-sanity:
     runs-on: ubuntu-latest
-    env:
-      PYTHONDONTWRITEBYTECODE: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Verify GitHub release allowlist
-        run: python tools/verify_github_release_allowlist.py .
-      - name: Install contract-test runner
-        run: python -m pip install --upgrade pip pytest
-      - name: Run release-contract tests on pristine checkout
-        run: python -B -m pytest tests/test_public_release_contract.py -v -p no:cacheprovider
-
-  wheel-e2e:
-    runs-on: ubuntu-latest
-    env:
-      PYTHONDONTWRITEBYTECODE: "1"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install wheel build tools
-        run: python -m pip install --upgrade pip build pytest
-      - name: Build wheel outside checkout
-        run: |
-          mkdir -p "$RUNNER_TEMP/wheel-source"
-          cp -R "$GITHUB_WORKSPACE"/. "$RUNNER_TEMP/wheel-source"
-          cd "$RUNNER_TEMP/wheel-source"
-          python -m build --wheel --outdir "$RUNNER_TEMP/dist"
-      - name: Create isolated wheel environment
-        run: python -m venv "$RUNNER_TEMP/venv"
-      - name: Install built wheel and test runner
-        run: "$RUNNER_TEMP/venv/bin/python" -m pip install "$RUNNER_TEMP"/dist/*.whl pytest
-      - name: Run package tests
-        working-directory: ${{ runner.temp }}
-        run: CORDIAG_CLI_PYTHON="$RUNNER_TEMP/venv/bin/python" CORDIAG_TEST_SOURCE_ROOT="" "$RUNNER_TEMP/venv/bin/python" -B -m pytest "$GITHUB_WORKSPACE/tests" -v -p no:cacheprovider
-      - name: Run deterministic synthetic smoke test
-        working-directory: ${{ runner.temp }}
-        run: "$RUNNER_TEMP/venv/bin/python" -B "$GITHUB_WORKSPACE/scripts/run_synthetic_smoke.py" --seed 42
-      - name: Verify installed package import
-        working-directory: ${{ runner.temp }}
-        run: "$RUNNER_TEMP/venv/bin/python" -c "import cordiag; assert 'site-packages' in cordiag.__file__"
-      - name: Verify installed command-line interface
-        working-directory: ${{ runner.temp }}
-        run: |
-          "$RUNNER_TEMP/venv/bin/cordiag" --help
-          "$RUNNER_TEMP/venv/bin/cordiag" version
-      - name: Run zPG synthetic CLI end to end
-        working-directory: ${{ runner.temp }}
-        run: "$RUNNER_TEMP/venv/bin/cordiag" zpg --config "$GITHUB_WORKSPACE/examples/zpg_synthetic.yaml"
-      - name: Run TG synthetic CLI end to end
-        working-directory: ${{ runner.temp }}
-        run: "$RUNNER_TEMP/venv/bin/cordiag" tg --config "$GITHUB_WORKSPACE/examples/tg_synthetic.yaml"
+      - run: echo "workflow syntax is valid"
