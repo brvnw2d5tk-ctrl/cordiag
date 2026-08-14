@@ -16,6 +16,8 @@
     "cordiag/m1.py",
     "cordiag/tg.py",
     "cordiag/zpg.py",
+    "configs/paper_tg.yaml",
+    "configs/paper_zpg.yaml",
     "examples/synthetic_design.csv",
     "examples/synthetic_protein.csv",
     "examples/synthetic_rna.csv",
@@ -28,6 +30,7 @@
     "tests/test_public_release_contract.py",
     "tests/test_cli_end_to_end.py",
     "tests/test_matched_inference_contract.py",
+    "tests/test_paper_config_contract.py",
     "tests/test_synthetic_smoke.py",
     "tools/verify_github_release_allowlist.py"
   ]

@@ -1,0 +1,5 @@
+# Paper parameter overlay. Controlled-data paths are intentionally omitted.
+n_permutations: 1000
+n_bootstrap: 1000
+n_subsamples: 20
+seed: 42

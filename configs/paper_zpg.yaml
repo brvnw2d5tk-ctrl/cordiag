@@ -1,0 +1,4 @@
+# Paper parameter overlay. Controlled-data paths are intentionally omitted.
+n_perms: 1000
+seed: 42
+cv: loocv

@@ -17,6 +17,16 @@ EXIT_OK = 0
 EXIT_NOT_READY = 1
 EXIT_USAGE = 2
 
+_DATA_CONFIG_KEYS = {"rna_csv", "protein_csv", "design_csv"}
+_ZPG_PARAMETER_KEYS = {"n_perms", "seed", "cv", "repeats"}
+_TG_PARAMETER_KEYS = {
+    "n_permutations", "n_bootstrap", "seed", "min_n", "n_subsamples", "groups"
+}
+_COMMAND_CONFIG_KEYS = {
+    "zpg": _DATA_CONFIG_KEYS | _ZPG_PARAMETER_KEYS | {"protein_column"},
+    "tg": _DATA_CONFIG_KEYS | _TG_PARAMETER_KEYS,
+}
+
 
 def _parse_scalar(token: str) -> Any:
     token = token.strip()
@@ -68,6 +78,21 @@ def parse_config(path: str) -> Dict[str, Any]:
                 raise ValueError(f"{path}:{line_number}: empty key")
             config[key] = _parse_list(value) if value.startswith("[") and value.endswith("]") else _parse_scalar(value)
     return config
+
+
+def validated_parameters(command: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    """Return parameters accepted by the selected public API and reject typos."""
+    if command not in _COMMAND_CONFIG_KEYS:
+        raise ValueError(f"unsupported command: {command}")
+    unknown = sorted(set(config) - _COMMAND_CONFIG_KEYS[command])
+    if unknown:
+        joined = ", ".join(unknown)
+        raise ValueError(f"unsupported {command} config key(s): {joined}")
+    parameter_keys = _ZPG_PARAMETER_KEYS if command == "zpg" else _TG_PARAMETER_KEYS
+    return {
+        key: value for key, value in config.items()
+        if key in parameter_keys and value is not None
+    }
 
 
 def _load_module(module_name: str):
@@ -167,9 +192,9 @@ def _json_value(value: Any) -> Any:
 
 def _run_zpg(args) -> int:
     config = parse_config(args.config)
+    params = validated_parameters("zpg", config)
     zpg = _load_module("zpg")
     data = _align_input_tables(_load_data_config(config, args.config))
-    params = {key: value for key, value in config.items() if key in ("n_perms", "seed", "cv", "repeats") and value is not None}
     params.setdefault("n_perms", 200)
     params.setdefault("seed", 42)
 
@@ -192,11 +217,9 @@ def _run_zpg(args) -> int:
 
 def _run_tg(args) -> int:
     config = parse_config(args.config)
+    params = validated_parameters("tg", config)
     tg = _load_module("tg")
     data = _align_input_tables(_load_data_config(config, args.config))
-    params = {key: value for key, value in config.items() if key in (
-        "n_permutations", "n_bootstrap", "seed", "min_n", "n_subsamples", "groups"
-    ) and value is not None}
     params.setdefault("n_permutations", 100)
     params.setdefault("n_bootstrap", 50)
     params.setdefault("seed", 42)

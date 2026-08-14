@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cordiag"
-version = "0.1.0"
+version = "0.1.1"
 description = "zPG and TG diagnostics for RNA-to-protein translation transferability"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -27,6 +27,9 @@ cordiag = "cordiag.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/brvnw2d5tk-ctrl/cordiag"
+
+[tool.setuptools]
+packages = ["cordiag"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

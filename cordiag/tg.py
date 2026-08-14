@@ -113,10 +113,11 @@ class TGResult:
     size_ratio_directional: float         # n_source / max(n_target, 1) — for asymmetry flag
     size_ratio_symmetric: float           # Implementation detail.
 
-    # TG metrics (TG_log = primary, TG_raw = secondary/supplementary)
+    # TG_raw is the primary decision-scale effect and classification scale;
+    # TG_log is its scale-free reporting and ranking companion.
     q2_within_b: float                # Q² within target condition
     q2_a_to_b: float                  # Q² train on source → predict on target
-    tg_raw: float                     # SECONDARY: Q²_within_b - Q²_a_to_b
+    tg_raw: float                     # PRIMARY: Q²_within_b - Q²_a_to_b
     tg_relative: float                # tg_raw / max(q2_within_b, 0.01)
 
     # Decomposed TG
@@ -134,7 +135,7 @@ class TGResult:
     permutation_p_rna: float
     interaction_pvalue: float = 1.0    # Approach A+: interaction p-value via condition-label restricted permutation (supplementary, report-only)
     ztg: float = 0.0                    # standardized TG_raw
-    tg_log: float = 0.0                 # PRIMARY: log(MSE_a_to_b / MSE_within_b)
+    tg_log: float = 0.0                 # Reporting/ranking: log cross/within MSE
 
     # Bootstrap CI (B=1000)
     ci_lower: float = 0.0
@@ -1602,7 +1603,7 @@ def _compute_tg_pair(
         n_subsamples=n_subsamples, seed=per_pair_seed,
     )
 
-    # ── TG_log: PRIMARY metric — log-ratio of cross vs within MSE ──
+    # ── TG_log: scale-free reporting/ranking companion ──
     # Scale-free (MSE ratio, log-compressed): immune to the TG_raw explosion
     # when MSE_stratum is tiny on Z-scored data.
     # Epsilon guard: floor MSE_within_b at 1e-10 to avoid log(0).
@@ -1810,7 +1811,8 @@ def compute_transportability_gap(
     For each protein m:
       1. Identify all within-batch condition pairs (a, b) where n_a >= min_n
          and n_b >= min_n.
-      2. Compute full TG decomposition: TG_log (primary), TG_raw, TG_design, TG_RNA.
+      2. Compute TG_raw (primary decision scale), TG_log (scale-free reporting
+         and ranking companion), TG_design, and TG_RNA.
       3. Permutation test (condition label shuffle within batch).
       4. Bootstrap CI for TG_raw.
       5. Quality gates and interpretation.

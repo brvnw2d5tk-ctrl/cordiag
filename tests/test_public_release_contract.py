@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tomllib
 from collections.abc import Callable
 
 import pytest
@@ -111,6 +112,21 @@ def test_public_tree_matches_explicit_allowlist():
 def test_public_tree_has_no_data_or_output_directories():
     assert not (PUBLIC_ROOT / "data").exists()
     assert not (PUBLIC_ROOT / "output").exists()
+
+
+def test_public_tree_contains_only_path_free_paper_parameter_overlays():
+    zpg_config = (PUBLIC_ROOT / "configs" / "paper_zpg.yaml").read_text(encoding="utf-8")
+    tg_config = (PUBLIC_ROOT / "configs" / "paper_tg.yaml").read_text(encoding="utf-8")
+
+    assert "rna_csv" not in zpg_config + tg_config
+    assert "protein_csv" not in zpg_config + tg_config
+    assert "design_csv" not in zpg_config + tg_config
+
+
+def test_wheel_discovery_includes_only_the_cordiag_python_package():
+    pyproject = tomllib.loads((PUBLIC_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["tool"]["setuptools"]["packages"] == ["cordiag"]
 
 
 def test_ci_runs_release_contract():
