@@ -21,24 +21,23 @@ __all__ = [
     'zscore_stat',
 ]
 
-# matched-subsample 采样流的固定偏移 (the package specification §4.1):
-# within/crossed 用 offset=0, cross a→b 用 offset=10000 —— +10000 使
-# cross 的采样流与 within/crossed 分离, 避免两条链共享同一采样序列。
+# Fixed offsets keep the cross-cohort subsampling stream separate from the
+# within-cohort and crossed-outcome streams.
 SEED_OFFSET_CROSS = 10000
 
 
 def derive_seed(key_str: str) -> int:
     """
-    md5 派生 per-pair RNG seed (TG 家族语义)。
+    Derive a deterministic per-pair RNG seed from an MD5 digest.
 
     Deterministic seed construction:
         per_pair_seed = int(hashlib.md5(
             f'{protein}_{source_cond}_{target_cond}_{batch}'.encode()
         ).hexdigest(), 16) % 2**31
 
-    为什么有这个行为: 保证 pair 间独立、与并行分块顺序无关 (worker
-    顺序不影响结果)。调用方负责构造 key_str 为
-    '{protein}_{source_cond}_{target_cond}_{batch}'。
+    This keeps pair-level streams independent of parallel execution order.
+    Callers construct ``key_str`` as
+    '{protein}_{source_cond}_{target_cond}_{batch}'.
 
     Returns
     -------
@@ -49,20 +48,15 @@ def derive_seed(key_str: str) -> int:
 
 def subsample_seed(base_seed: Optional[int], rep: int, offset: int = 0) -> int:
     """
-    matched-subsample 链上的 per-rep seed (TG 家族语义)。
+    Return the replicate-specific seed for matched subsampling.
 
     Matched-subsample seed convention:
-    (the package specification §4.1-4.2):
-      - within / crossed:  rng.choice(...) 用 seed = pair_seed + rep
+      - within / crossed: ``pair_seed + rep``
                            (offset=0)
-      - cross a→b:         rng.choice(...) 用 seed = pair_seed + rep + 10000
+      - cross a→b: ``pair_seed + rep + 10000``
                            (offset=SEED_OFFSET_CROSS)
-    原实现内联为 `(seed if seed is not None else 42) + rep` 与
-    `+ rep + 10000`; 本函数将链约定显式化, 数值语义与原实现bit-identical。
-
-    为什么有这个行为: matched-subsample 的 rng.choice(replace=False)
-    结果必须跨重跑可复现; +10000 把 cross 的采样流与 within/crossed
-    分离, 保证两条链互不共享采样序列。
+    The offset separates the cross-cohort stream from the within-cohort and
+    crossed-outcome streams while keeping every draw reproducible.
 
     Returns
     -------
@@ -74,13 +68,11 @@ def subsample_seed(base_seed: Optional[int], rep: int, offset: int = 0) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Spearman correlation (shared primitive, the package specification §3.2)
+# Shared Spearman-correlation primitive
 #
-# Shared Spearman-correlation primitive.
-# Implementation detail.
-# `from cordiag.m1 import _spearmanr` 使用 (下划线前缀 = 私有共享原语,
-# 不进 __all__)。tie 处理依赖 scipy.stats.spearmanr 版本 —— 黄金回归
-# 锁定 scipy 1.14.1 (pyproject.toml scipy>=1.10,<1.18)。
+# The leading underscore keeps this helper outside the public API. Tie handling
+# follows the installed SciPy implementation.
+# Supported SciPy versions are constrained in pyproject.toml.
 # ═══════════════════════════════════════════════════════════════════
 
 def _spearmanr(x, y) -> Tuple[float, float]:
@@ -140,8 +132,8 @@ def m1_loocv(
     """Compute stratum-aware ridge leave-one-out predictions and diagnostics."""
     if unseen_stratum not in ('fallback', 'skip'):
         raise ValueError(
-            "unseen_stratum must be 'fallback' (TG 语义) or 'skip' (zPG 语义), "
-            f"got {unseen_stratum!r}; m1.py 禁止自动推断, 调用方必须显式选择"
+            "unseen_stratum must be 'fallback' (TG) or 'skip' (zPG), "
+            f"got {unseen_stratum!r}; callers must choose the policy explicitly"
         )
     strata = np.asarray(strata)
     n = len(P)
@@ -188,13 +180,12 @@ def m1_loocv(
             test_mean_y = stratum_means_y[s_test]
             test_mean_X = stratum_means_X[s_test]
         elif unseen_stratum == 'fallback':
-            # TG 语义: 全局训练 mean 回退 (core.py _m1_loocv L336-337)
+            # TG fallback: center an unseen stratum by the pooled training mean.
             test_mean_y = np.mean(P_tr).astype(np.float64)
             test_mean_X = np.mean(X_tr, axis=0).astype(np.float64)
         else:
-            # Implementation detail.
-            #   if len(s_tr_idx) == 0: truths[i] = y[i]; continue
-            # 该样本预测保持 NaN, 不进 MSE/edf/alpha 汇总
+            # In skip mode, leave the prediction undefined and exclude it from
+            # the MSE, effective-degrees-of-freedom, and alpha summaries.
             preds[fold_idx] = np.nan
             continue
 
@@ -271,26 +262,26 @@ def m1_train_test(
 
     Uses the package's shared train/test modelling semantics.
 
-    为什么有这个行为: Q²_a→b (train source → predict target) 与
-    matched-subsample 系列 (within/crossed) 都用它 —— 单次拟合 + 逐样本
-    预测; 测试样本 stratum 不在训练集时回退全局训练 mean (与 m1_loocv
-    的 'fallback' 模式同一约定; zPG 无 train-test 分割, 全部 LOOCV,
-    故本函数无 'skip' 模式)。
+    Fits once on the training cohort and predicts the test cohort. If a test
+    stratum is absent from training, centering falls back to the pooled training
+    mean, matching the TG policy used by :func:`m1_loocv`.
 
     Parameters
     ----------
     P_train : np.ndarray (n_train,)
     X_train : np.ndarray (n_train, p)
-    strata_train : np.ndarray (n_train,) — 训练样本 stratum 标签
+    strata_train : np.ndarray (n_train,)
+        Training-sample stratum labels.
     P_test : np.ndarray (n_test,)
     X_test : np.ndarray (n_test, p)
-    strata_test : np.ndarray (n_test,) — 测试样本 stratum 标签
+    strata_test : np.ndarray (n_test,)
+        Test-sample stratum labels.
     cv_alphas : list of float
 
     Returns
     -------
     predictions : np.ndarray (n_test,)
-        预测失败的样本为 NaN。
+        Failed predictions are represented by NaN.
     """
     strata_train = np.asarray(strata_train)
     strata_test = np.asarray(strata_test)
@@ -364,7 +355,7 @@ def m1_train_test(
 
 
 def ridge_edf(X_scaled: np.ndarray, alpha: float) -> float:
-    """Helper for the paired-data diagnostic calculation."""
+    """Return the effective degrees of freedom of a ridge fit."""
     n, p = X_scaled.shape
     k = min(n, p)
     if k == 0:
@@ -400,7 +391,7 @@ def empirical_p(
     two_sided: bool = True,
     denominator: Optional[int] = None,
 ) -> float:
-    """Helper for the paired-data diagnostic calculation."""
+    """Compute a continuity-corrected empirical tail probability."""
     null_arr = np.asarray(null_vals, dtype=np.float64)
     null_arr = null_arr[~np.isnan(null_arr)]
     if two_sided:
@@ -415,7 +406,7 @@ def empirical_p(
 
 
 def zscore_stat(obs: float, null_vals: np.ndarray) -> float:
-    """Helper for the paired-data diagnostic calculation."""
+    """Standardize an observed statistic against finite null realizations."""
     null_arr = np.asarray(null_vals, dtype=np.float64)
     null_arr = null_arr[~np.isnan(null_arr)]
     if len(null_arr) < 1:
@@ -427,9 +418,9 @@ def zscore_stat(obs: float, null_vals: np.ndarray) -> float:
     return float((obs - mu) / sd)
 
 
-# ── 内部工具 ────────────────────────────────────────────────────────
+# Internal utilities
 
 def _strata_unique_order(strata: np.ndarray) -> np.ndarray:
-    """Helper for the paired-data diagnostic calculation."""
+    """Return stratum labels in order of first appearance."""
     _, first_idx = np.unique(strata, return_index=True)
     return strata[np.sort(first_idx)]

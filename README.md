@@ -78,6 +78,15 @@ is the scale-free reporting and ranking companion. The API field
 `interpretation_primary` remains the primary classification field; its name
 does not imply that TG_log is the primary statistical endpoint.
 
+When the observed TG statistic uses matched-subsample evaluation, every
+restricted-permutation null realization uses the same matched within,
+source-to-target transfer, and crossed estimators, with the observed training
+size and configured number of subsamples. LOOCV null helpers are used only on
+the predefined fallback path. The v0.1.2 release corrects stale v0.1.1
+documentation that incorrectly described the executable matched-null branch as
+always using LOOCV; the numerical implementation and frozen paper results are
+unchanged.
+
 ## Input fields and controlled-data boundary
 
 For zPG, `rna_csv` contains one or more module-score columns and

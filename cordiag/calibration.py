@@ -27,8 +27,6 @@ Data generation:
   - RNA: n x p multivariate normal with condition-specific means
   - Protein: P = beta_0 + beta_stratum * Z + beta_rna * X_rna + epsilon
 
-TG spec v2 (double-reviewer revision), 2026-07-28.
-
 The module-level tuning grid remains patchable so callers can run controlled
 simulation studies with explicitly selected repetition and subsampling counts.
 """
@@ -42,17 +40,8 @@ import warnings
 import os
 
 
-# ── TG core imports (single source of truth) ────────────────────────────
-# Shared core component
-# m1.py 已落地 (the package specification §3.2), 实际状态 (功能正确, 无需再改):
-#   - 4/6 名字是 m1 原语经 tg.py re-export: _compute_stratum_means_loocv
-#     (= m0_stratum_means_loocv 别名), _m1_loocv (TG 包装, unseen_stratum
-#     固定 'fallback'), _m1_train_test (= m1_train_test 别名),
-#     _spearmanr (= m1._spearmanr)
-#   - 2/6 名字是 tg.py 自持 (m1.py 不重实现): _compute_q2_within_matched /
-#     _compute_q2_crossed_matched (matched-subsample 阈值链,
-#     见 m1.py docstring 不变量 #2)
-# 调用语义零变化 —— 等价性已由 the package specification §5.4 验证。
+# Import the package estimators so calibration and inference share prediction,
+# subsampling, and seeding conventions.
 from cordiag.tg import (_compute_stratum_means_loocv, _m1_loocv, _m1_train_test,
                      _compute_q2_within_matched, _compute_q2_cross_matched,
                      _compute_q2_crossed_matched,
@@ -60,19 +49,13 @@ from cordiag.tg import (_compute_stratum_means_loocv, _m1_loocv, _m1_train_test,
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Warning 作用域 (工程审核 2026-08-01: 模块级 filterwarnings('ignore')
-# 已移除 — 它会吞掉调用方进程级的所有警告; 同 tg.py 方案)
-#
-# 替代方案: 仅在内部计算期间 (scipy/numpy/sklearn 数值噪声) 静默
-# RuntimeWarning/FutureWarning; 本模块刻意发出的 UserWarning 仍正常显示。
-# 装饰目标 = 数值重入口 (simulate_one_rep / run_calibration); TG 核心调用
-# (_compute_q2_within_matched / _compute_q2_crossed_matched) 已在 tg.py 侧
-# 自带 @_quiet_internal (2026-08-01 扩展)。
+# Suppress numerical RuntimeWarning and FutureWarning messages only while an
+# internal numerical helper is running; package UserWarning messages remain visible.
 # ═══════════════════════════════════════════════════════════════════════════
 
 @contextlib.contextmanager
 def _suppress_internal_warnings():
-    """Scope warning suppression to internal library calls (tg.py 同款)."""
+    """Scope warning suppression to internal numerical library calls."""
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', category=RuntimeWarning)
         warnings.filterwarnings('ignore', category=FutureWarning)
@@ -505,10 +488,10 @@ def _compute_q2_components(
     """
     Compute all Q2 and TG components for one simulation run.
 
-    Uses tg_core's LOOCV stratum means and M1 Ridge model (single source of
+    Uses the package LOOCV stratum means and M1 ridge model (single source of
     truth).  All Q² values share the same denominator (target M0 LOOCV MSE).
-    This is the correct approach per TG spec — without it, TG decomposition
-    identity (TG_raw = TG_design + TG_RNA) does not hold.
+    The shared denominator preserves the decomposition identity
+    TG_raw = TG_design + TG_RNA.
 
     Parameters
     ----------
@@ -529,7 +512,7 @@ def _compute_q2_components(
     result.n_source = n_a
     result.n_target = n_b
     result.size_ratio = max(n_a, n_b) / max(min(n_a, n_b), 1)
-    result.ridge_alpha = 1.0  # placeholder
+    result.ridge_alpha = 1.0  # initial default
 
     # ── Build stratum labels ──
     strata_a = (design_a['condition'].astype(str) + '_' +
@@ -557,7 +540,7 @@ def _compute_q2_components(
         return result
 
     # ── Q²_within_b: matched-subsample CV (LOOCV fallback for small n) ──
-    train_size = min(n_a, max(n_b // 2, n_b - 10))  # match source, min 10 test (sync with tg_core)
+    train_size = min(n_a, max(n_b // 2, n_b - 10))  # match source; retain at least 10 test samples
     sim_seed = 42
     if train_size >= 8 and n_b - train_size >= 3:
         q2_w, _, _, _, within_alpha = _compute_q2_within_matched(

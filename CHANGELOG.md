@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2 - 2026-09-04
+
+- Corrected the TG restricted-permutation documentation to describe the
+  existing, tested matched-null estimator contract and to distinguish the
+  fallback-null helpers.
+- Added an explicit release contract confirming that a matched null calls the
+  matched within, transfer, and crossed estimators for every realization.
+- No TG numerical algorithm or frozen paper result changed from v0.1.1.
+
 ## 0.1.1 - 2026-08-14
 
 - Added path-free paper parameter overlays with tested CLI/API names.

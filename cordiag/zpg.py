@@ -9,17 +9,17 @@ from sklearn.linear_model import Ridge, RidgeCV
 from sklearn.preprocessing import StandardScaler
 
 # ---------------------------------------------------------------------------
-# Implementation detail.
+# Random-number generator used when a call does not supply an explicit seed.
 # ---------------------------------------------------------------------------
 
 _RNG = np.random.default_rng(42)
 
-# 共享 M1 集成 (工程审核 2026-08-01: 删除 try/except ImportError fallback —
-# m1.py 已落地, fallback 分支永远不可达)。m1.py 是唯一实现, 显式导入;
-# zPG 必须传 unseen_stratum='skip' (zPG 语义: 跳过样本, 不回退), 见 m1.py。
+# The shared M1 implementation is the single source of truth. zPG requests
+# ``unseen_stratum='skip'`` so observations without a trainable stratum remain
+# undefined rather than falling back to a pooled mean.
 from .m1 import m1_loocv as _m1_loocv
 
-# Implementation detail.
+# Candidate ridge penalties used by cross-validation.
 _CV_ALPHAS = [0.01, 0.1, 1.0, 10.0, 100.0]
 
 
@@ -33,21 +33,20 @@ def _upper_tail_permutation_pvalue(null_values, observed):
 
 
 def set_seed(seed=42):
-    """设置全局 RNG 种子, 保证可复现。
+    """Reset the module-level random-number generator.
 
-    Algorithm note: coerce supported design representations.
-    调用语义: 之后所有 seed=None 的 zPG 调用共享此 RNG 流。
+    Subsequent zPG calls with ``seed=None`` draw from this reproducible stream.
     """
     global _RNG
     _RNG = np.random.default_rng(seed)
 
 
 # ---------------------------------------------------------------------------
-# 内部辅助
+# Internal helpers
 # ---------------------------------------------------------------------------
 
 def _coerce_design(design, n, require_batch=True):
-    """Helper for the paired-data diagnostic calculation."""
+    """Validate and normalize supported design representations."""
     if isinstance(design, pd.DataFrame):
         needed = ['condition', 'batch'] if require_batch else ['condition']
         missing = [c for c in needed if c not in design.columns]
@@ -73,45 +72,35 @@ def _coerce_design(design, n, require_batch=True):
 
 
 # ---------------------------------------------------------------------------
-# Implementation detail.
+# Stratum-conditioned ridge prediction.
 # ---------------------------------------------------------------------------
 
 def _loo_stratum_ridge(X, y, strata, mice=None):
-    """Stratum-conditioned LOOCV Ridge (zPG 模式, 保留原实现语义)。
+    """Run stratum-conditioned leave-one-out ridge prediction for zPG.
 
-    Algorithm note: leave-one-out ridge predictions within strata.
-    共享实现: `cordiag/m1.py` `m1_loocv` L179-233 (本函数为其 zPG 侧
-    契约消费者, 显式传 unseen_stratum='skip')。
+    The shared implementation is :func:`cordiag.m1.m1_loocv`; this wrapper
+    explicitly selects the zPG policy for unseen strata.
 
-    逐样本留一预测:
-      - 训练集内按 condition x batch stratum 中心化 (X, y)
-      - n_tr >= 20 时用 RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0],
-        cv=min(5, n_tr)) 选 alpha; 否则固定 Ridge(alpha=1.0)
-      - 预测值加回 test 样本所在 stratum 的 y 均值
-    测试样本所在 stratum 在训练集中不存在时, 该样本跳过 (preds 为 NaN)
-    — singleton-stratum 语义: 跳过而非全局均值回退 (与 TG 的 'fallback'
-    模式不同, 见 m1.py L227-233)。
+    Predict each held-out sample after centering X and y within condition-by-
+    batch strata. RidgeCV selects alpha when at least 20 training observations
+    are available; smaller training sets use alpha=1. Predictions for strata
+    absent from training remain NaN.
 
     Parameters
     ----------
     X : np.ndarray (n_samples, n_predictors)
     y : np.ndarray (n_samples,)
     strata : pandas.Series or np.ndarray
-        condition_batch 分层标签 (样本顺序与 X/y 一致)。
+        Condition-by-batch labels aligned with X and y.
     mice : array-like or None
-        样本索引载体; 原实现用 len(mice) 取样本数 (无 GROUP 语义,
-        zPG 侧不按组排除)。None 时用 len(y) (等价)。
+        Optional sample-index container used only to determine sample count.
 
     Returns
     -------
     (preds, truths) : (np.ndarray, np.ndarray)
-        逐样本预测与真实值; 失败/跳过的样本 preds 为 NaN
-        (truths 在这些位置为 y 原值, 调用方仅经 ~np.isnan(preds) 使用)。
+        Per-sample predictions and observed values. Skipped predictions are NaN.
     """
-    # 共享 M1 路径: 委托 m1_loocv, 显式 zPG 模式 ('skip')。
-    # Implementation detail.
-    # Implementation detail.
-    # (工程审核 2026-08-01), 语义保留在 m1_loocv 的 'skip' 分支。
+    # Delegate prediction to the shared M1 implementation in zPG mode.
     n = len(y) if mice is None else len(mice)
     preds, _mse, _edf, _alpha = _m1_loocv(
         P=np.asarray(y[:n], dtype=np.float64),
@@ -127,13 +116,14 @@ def _loo_stratum_ridge(X, y, strata, mice=None):
 
 
 def _loo_fast(X, y, strata, mice):
-    """Stratum-conditioned LOOCV Ridge with FIXED alpha=1.0 (max speed)。
+    """Stratum-conditioned LOOCV Ridge with fixed alpha=1.0 for speed.
 
-    Algorithm note: construct reproducible cross-validation splits.
-    Stability 分析专用: 固定 alpha 避免 RidgeCV 的 ~13x 开销;
-    用于 CV 方案比较排名, 不是绝对 zPG 值。
+    Fixed-alpha approximation used only for cross-validation stability checks.
+    Uses fixed alpha=1 for fast cross-validation stability comparisons; it is
+    not used to report the primary zPG statistic.
 
-    Returns (preds, truths) — 与 _loo_stratum_ridge 同签名。
+    Returns predictions and observations in the same form as
+    :func:`_loo_stratum_ridge`.
     """
     n = len(mice)
     preds = np.full(n, np.nan)
@@ -175,14 +165,14 @@ def _loo_fast(X, y, strata, mice):
 
 
 def _kfold_stratum_ridge(X, y, strata, n_folds=5, seed=42):
-    """Stratum-conditioned k-fold CV Ridge (LOOCV 的泛化)。
+    """Run stratum-conditioned k-fold ridge prediction.
 
-    Algorithm note: evaluate ridge predictions across folds.
+    Folds are evaluated independently while preserving stratum conditioning.
 
-    每折: 其余 k-1 折训练, 本折预测; 训练集内按 condition x batch
-    中心化; 固定 alpha=1.0 (stability 比较不追求最优 alpha)。
+    Each fold is predicted from the remaining folds after condition-by-batch
+    centering. Alpha is fixed at 1.0 for stability comparisons.
 
-    Returns (preds, truths) — 每样本恰好预测一次, 失败样本 preds 为 NaN。
+    Each sample is predicted once; failed predictions are NaN.
     """
     rng = np.random.default_rng(seed)
     n = len(y)
@@ -251,7 +241,7 @@ def _kfold_stratum_ridge(X, y, strata, n_folds=5, seed=42):
 
 
 # ---------------------------------------------------------------------------
-# Implementation detail.
+# Rank-based zPG statistic.
 # ---------------------------------------------------------------------------
 
 def compute_rank_zPG(R_modules, P, design, n_perms, seed=None):
@@ -324,7 +314,7 @@ def compute_rank_zPG(R_modules, P, design, n_perms, seed=None):
         # Degenerate observation (valid preds < 3 or constant predictions):
         # rho_obs is undefined — (0 + 1)/(n_perms+1) would report a
         # pseudo-significant p-value. Mirror rho_obs as NaN (caller decide()
-        # maps NaN -> NO_GO) (2026-08-01 edge-case guard).
+        # maps NaN to NO_GO).
         p_val = np.nan
     elif len(perm_rhos) == 0:
         # No valid permutation produced a rho — no null information at all
@@ -359,7 +349,7 @@ def compute_rank_zPG(R_modules, P, design, n_perms, seed=None):
 
 
 # ---------------------------------------------------------------------------
-# Implementation detail.
+# Covariate-adjusted rank-based zPG statistic.
 # ---------------------------------------------------------------------------
 
 def compute_rank_zPG_partial(R_modules, P, design, n_perms, seed=None, n_pcs=3):
@@ -414,9 +404,7 @@ def compute_rank_zPG_partial(R_modules, P, design, n_perms, seed=None, n_pcs=3):
     else:
         zPG_partial = (rho_obs - np.mean(perm_rhos)) / perm_std
     if np.isnan(rho_obs):
-        # Degenerate observation: rho_obs undefined — mirror as NaN instead of
-        # Implementation detail.
-        # 2026-08-01 audit; same convention as compute_rank_zPG).
+        # A degenerate observed correlation has no defined permutation P value.
         p_val = np.nan
     elif len(perm_rhos) == 0:
         p_val = np.nan
@@ -443,11 +431,11 @@ def compute_rank_zPG_partial(R_modules, P, design, n_perms, seed=None, n_pcs=3):
 
 
 # ---------------------------------------------------------------------------
-# Implementation detail.
+# Cross-validation variants of zPG.
 # ---------------------------------------------------------------------------
 
 def _zpg_with_cv(R_modules, P, design, n_folds, n_perms, seed=42, actual_perms=None):
-    """Helper for the paired-data diagnostic calculation."""
+    """Compute zPG using the requested number of cross-validation folds."""
     design = _coerce_design(design, len(P))
     rng = np.random.default_rng(seed)
     n = len(P)
@@ -468,7 +456,7 @@ def _zpg_with_cv(R_modules, P, design, n_folds, n_perms, seed=42, actual_perms=N
     if valid.sum() < 3:
         # Degenerate small-n path — mirror the LOOCV convention
         # (compute_rank_zPG): NaN rank/rho/p, not a pseudo-significant
-        # (0.0, 0.0, 1.0) placeholder (2026-08-01 edge-case guard;
+        # sentinel values (0.0, 0.0, 1.0);
         # decision layer maps NaN -> NO_GO).
         return {'zPG_rank': np.nan, 'rho_obs': np.nan, 'p_val': np.nan,
                 'n_valid': valid.sum(), 'n_folds': n_folds}
@@ -513,7 +501,7 @@ def _zpg_with_cv(R_modules, P, design, n_folds, n_perms, seed=42, actual_perms=N
     if np.isnan(rho_obs) or len(perm_rhos) == 0:
         # Degenerate observation or no valid permutation — NaN, same
         # convention as compute_rank_zPG / the LOOCV branch above
-        # (2026-08-01 edge-case guard).
+        # when too few finite null values remain.
         p_val = np.nan
     else:
         p_val = _upper_tail_permutation_pvalue(perm_rhos, rho_obs)
@@ -531,7 +519,7 @@ def _zpg_with_cv(R_modules, P, design, n_folds, n_perms, seed=42, actual_perms=N
 
 
 def select_cv(n):
-    """Helper for the paired-data diagnostic calculation."""
+    """Choose a cross-validation scheme from the available sample size."""
     if n < 30:
         return ('loocv', None, 1)
     if n < 100:
@@ -587,7 +575,7 @@ def compute_zpg(R_modules, P, design, n_perms, seed=None, cv=None, repeats=None)
 
 
 # ---------------------------------------------------------------------------
-# 辅助计算 (supplementary)
+# Supplementary calculations
 # ---------------------------------------------------------------------------
 
 def compute_ECI(R_modules, design, cond_pairs, n_bootstrap=200, seed=None):
@@ -616,7 +604,7 @@ def compute_ECI(R_modules, design, cond_pairs, n_bootstrap=200, seed=None):
             cos_sims.append(np.mean(boot_cos))
 
         cos_sims_arr = np.array(cos_sims)
-        # ECI = 1 - mean(cos similarity) → 0=一致, 1=相反
+        # ECI = 1 - mean(cosine similarity): 0 is concordant, 1 is opposite.
         eci = 1.0 - np.mean(cos_sims_arr)
         eci_std = np.std(cos_sims_arr) / max(np.sqrt(len(cos_sims_arr)), 1)
         eci_ci = (max(0, eci - 1.96*eci_std), min(1, eci + 1.96*eci_std))
@@ -630,32 +618,32 @@ def compute_ECI(R_modules, design, cond_pairs, n_bootstrap=200, seed=None):
 
 
 def _interpret_ECI(eci):
-    """将 ECI 值映射为可读解读 (supplementary)。
+    """Map ECI values to descriptive supplementary categories.
 
-    Algorithm note: apply the package decision thresholds.
-    阈值基于 n>=10/condition 的仿真校准, 为启发式:
-      <0.3 高度一致 / <0.5 中度一致 / <0.7 明显不一致 / >=0.7 严重不一致。
+    Map ECI values to the calibrated descriptive categories.
+    The heuristic thresholds were calibrated in simulations with at least ten
+    observations per condition.
     """
-    if eci < 0.3: return "高度一致 (方向稳定)"
-    elif eci < 0.5: return "中度一致"
-    elif eci < 0.7: return "明显不一致 (可能批次效应)"
-    else: return "严重不一致 (批次效应主导)"
+    if eci < 0.3: return "high concordance (stable direction)"
+    elif eci < 0.5: return "moderate concordance"
+    elif eci < 0.7: return "clear discordance (possible batch effect)"
+    else: return "severe discordance (batch-dominated)"
 
 
 def joint_decision(zPG, ECI, zPG_thresh=0, ECI_thresh=0.5):
     """Combine paired-gain and expression-consistency statistics into a categorical decision."""
     if zPG > zPG_thresh and ECI < ECI_thresh:
-        return "GO: 配对信号+方向稳定 → 可建模"
+        return "GO: paired signal with stable direction"
     elif zPG > zPG_thresh and ECI >= ECI_thresh:
-        return "CAUTION: 有信号但方向不稳定 → 需桥接"
+        return "CAUTION: signal present but direction is unstable"
     elif zPG <= zPG_thresh and ECI >= ECI_thresh:
-        return "STOP: 无信号+方向不稳定 → 批次主导, 不建模"
+        return "STOP: no signal and unstable direction"
     else:
-        return "NO_SIGNAL: 无配对信号但方向稳定 → 个体耦合弱, 组级分析"
+        return "NO_SIGNAL: stable direction but weak individual pairing"
 
 
 # ---------------------------------------------------------------------------
-# Implementation detail.
+# Multiple-testing correction.
 # ---------------------------------------------------------------------------
 
 def fdr_bh(p_values):
@@ -671,7 +659,7 @@ def fdr_bh(p_values):
         return out
     order = np.argsort(p, kind='mergesort')
     q = p[order] * n / np.arange(1, n + 1)
-    q = np.minimum.accumulate(q[::-1])[::-1]   # 反向单调化
+    q = np.minimum.accumulate(q[::-1])[::-1]   # enforce monotonicity from the tail
     q = np.minimum(q, 1.0)
     result = np.empty(n)
     result[order] = q
@@ -679,7 +667,7 @@ def fdr_bh(p_values):
 
 
 # ---------------------------------------------------------------------------
-# Implementation detail.
+# Decision rules.
 # ---------------------------------------------------------------------------
 
 def decide(
@@ -702,11 +690,11 @@ def decide(
 
 
 def decide_legacy(zpg, p_fdr, zpg_go=1.0, fdr_go=0.1):
-    """旧三档决策 GO / GRAY / NO_GO (legacy, deprecated)。
+    """Return the deprecated GO/GRAY/NO_GO compatibility decision.
 
-    Algorithm note: retain a legacy three-level compatibility helper.
-    已被 `decide()` (GO/INCONCLUSIVE/NO_GO) 取代 — 保留仅用于逐位复现
-    兼容历史三档决策语义。
+    Retained only for compatibility with historical three-level decisions.
+    New analyses should use :func:`decide`, which returns
+    GO/INCONCLUSIVE/NO_GO.
     """
     if zpg > zpg_go and p_fdr < fdr_go:
         return 'GO'
@@ -717,11 +705,11 @@ def decide_legacy(zpg, p_fdr, zpg_go=1.0, fdr_go=0.1):
 
 
 # ---------------------------------------------------------------------------
-# 快速 sanity check (gray zone 分析, 无 permutation)
+# Fast module-level check without permutation
 # ---------------------------------------------------------------------------
 
 def compute_module_q2_simple(R_modules, P, design):
-    """Helper for the paired-data diagnostic calculation."""
+    """Compute per-module prediction Q² values with stratum-conditioned LOOCV."""
     n = len(P)
     if n < 3:
         return np.nan, np.nan, 0
@@ -769,11 +757,11 @@ def compute_module_q2_simple(R_modules, P, design):
 
 
 # ---------------------------------------------------------------------------
-# 模块工具
+# Module utilities
 # ---------------------------------------------------------------------------
 
 def module_scores(rna_df, modules_ref, log1p=True):
-    """Helper for the paired-data diagnostic calculation."""
+    """Aggregate RNA features into scores for predefined modules."""
     out = {}
     for mod_name in sorted(modules_ref.keys()):
         genes = [g for g in modules_ref[mod_name] if g in rna_df.columns]
@@ -784,25 +772,26 @@ def module_scores(rna_df, modules_ref, log1p=True):
 
 
 def data_driven_modules(prot_df, n_modules=8, genes_per_module=None):
-    """数据驱动模块构成: eigh 1st-PC loading 排序 + quantile 等分。
+    """Construct data-driven modules from first-PC loading ranks.
 
-    Algorithm note: use the first principal-component loading magnitude to
-    divide features into deterministic quantile-based modules.
+    Features are ranked by first-principal-component loading magnitude and
+    divided into deterministic quantile-based modules.
 
     Parameters
     ----------
     prot_df : pandas.DataFrame
-        样本 x 蛋白基因表达。
+        Samples by protein features.
     n_modules : int
-        模块数 (默认 8)。
+        Number of modules (default 8).
     genes_per_module : int or None
-        None → 原实现的 quantile 等分 (按基因数 / n_modules 边界);
-        传入 int → 固定每模块基因数的等分切分 (cordiag specification预留 API)。
+        None uses quantile boundaries based on feature count and n_modules;
+        An integer requests deterministic groups with that many genes each.
 
     Returns
     -------
     dict[str, list[str]]
-        {'M0': [genes], ...}; 基因数 <3 的模块按原实现丢弃 (模块编号有空洞)。
+        Mapping of module names to features. Modules with fewer than three
+        features are omitted.
     """
     from numpy.linalg import eigh
     prot_corr = prot_df.corr().values  # Protein-protein correlation matrix
@@ -838,11 +827,11 @@ def data_driven_modules(prot_df, n_modules=8, genes_per_module=None):
 
 
 # ---------------------------------------------------------------------------
-# 仿真数据 (测试 + 功率估计共用)
+# Simulation data used by tests and power calculations
 # ---------------------------------------------------------------------------
 
 def simulate_paired_data(n, effect_size_d, n_modules=8, seed=42):
-    """Helper for the paired-data diagnostic calculation."""
+    """Simulate paired module and protein measurements at a target effect size."""
     rng_local = np.random.default_rng(seed)
     true_rho = effect_size_d / np.sqrt(4 + effect_size_d**2)
 

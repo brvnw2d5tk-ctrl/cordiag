@@ -21,15 +21,15 @@ def test_matched_tg_permutation_uses_the_observed_matched_estimators(monkeypatch
     called = []
 
     def within(*args, **kwargs):
-        called.append("within")
+        called.append(("within", args[3], kwargs["n_subsamples"], kwargs["seed"]))
         return 0.5, 0.0, 1.0, 1.0, 1.0
 
     def cross(*args, **kwargs):
-        called.append("cross")
+        called.append(("cross", args[6], kwargs["n_subsamples"], kwargs["seed"]))
         return 0.1, 1.0
 
     def crossed(*args, **kwargs):
-        called.append("crossed")
+        called.append(("crossed", args[4], kwargs["n_subsamples"], kwargs["seed"]))
         return 0.3, 1.0, 0.0
 
     def forbidden(*args, **kwargs):
@@ -47,10 +47,19 @@ def test_matched_tg_permutation_uses_the_observed_matched_estimators(monkeypatch
         np.arange(16, dtype=float).reshape(8, 2), np.arange(24, dtype=float).reshape(12, 2),
         np.repeat("source_batch", 8), np.repeat("target_batch", 12), [1.0], 10,
         np.random.default_rng(7), 0.4, 0.2, 0.2,
-        cv_mode="matched_subsample", n_subsamples=3, n_source=8, matched_seed=11,
+        cv_mode="matched_subsample", n_subsamples=3, n_source=8,
+        train_size=6, matched_seed=11,
     )
 
-    assert called == [name for _ in range(10) for name in ("within", "cross", "crossed")]
+    expected = []
+    for permutation_index in range(10):
+        seed = 100011 + permutation_index
+        expected.extend([
+            ("within", 6, 3, seed),
+            ("cross", 6, 3, seed),
+            ("crossed", 6, 3, seed),
+        ])
+    assert called == expected
 
 
 def test_matched_bootstrap_uses_the_observed_training_size(monkeypatch):

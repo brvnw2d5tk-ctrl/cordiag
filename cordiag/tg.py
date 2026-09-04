@@ -11,17 +11,16 @@ import warnings
 
 
 # ═══════════════════════════════════════════════════════════════════
-# M1 共享原语 (cordiag 集成 — 2026-08-01, cordiag specification)
+# Shared M1 primitives
 #
-# 以下 5 个原语统一由 cordiag.m1 提供, 本模块只保留调用语义:
-#   m0_stratum_means_loocv → _compute_stratum_means_loocv (别名)
-#   m1_loocv               → _m1_loocv (包装, unseen_stratum 固定 'fallback',
-#                            TG 语义; m1.py 禁止自动推断)
-#   m1_train_test          → _m1_train_test (别名)
-#   ridge_edf              → _ridge_edf (别名)
-#   _spearmanr             → _spearmanr (原语本体 2026-08-01 迁入 m1.py)
-# 下划线前缀名字保留 re-export (calibration.py 经本模块使用这些原语),
-# 调用语义零变化 —— 等价性已由 cordiag specification 验证。
+# These primitives come from cordiag.m1 so TG uses one prediction and seeding
+# implementation:
+#   m0_stratum_means_loocv → _compute_stratum_means_loocv
+#   m1_loocv               → _m1_loocv with the TG fallback policy
+#   m1_train_test          → _m1_train_test
+#   ridge_edf              → _ridge_edf
+#   _spearmanr             → _spearmanr
+# Underscore-prefixed aliases remain available to the calibration module.
 # ═══════════════════════════════════════════════════════════════════
 from cordiag.m1 import (
     m0_stratum_means_loocv as _compute_stratum_means_loocv,
@@ -35,23 +34,19 @@ from cordiag.m1 import (
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Warning 作用域 (工程审核 2026-08-01: 模块级 filterwarnings('ignore')
-# 已移除 — 它会吞掉调用方进程级的所有警告)
+# Warning scope: suppress only warnings emitted inside numerical helpers.
 #
-# 替代方案: 仅在内部计算期间 (scipy/numpy/sklearn 数值噪声) 静默
-# RuntimeWarning/FutureWarning; 本模块刻意发出的 UserWarning
-# (TG 分解恒等式违约告警 / 多 batch 告警) 仍正常显示。
+# RuntimeWarning and FutureWarning messages from numerical dependencies are
+# suppressed only during internal calculations. Package UserWarning messages
+# remain visible.
 # ═══════════════════════════════════════════════════════════════════
 
 @contextlib.contextmanager
 def _suppress_internal_warnings():
     """Scope warning suppression to internal library calls.
 
-    Replaces the removed module-level ``warnings.filterwarnings('ignore')``:
-    suppresses only RuntimeWarning (scipy/numpy numerics) and FutureWarning
-    (pandas/sklearn) while internal computation runs. Intentional
-    ``warnings.warn(..., category=UserWarning)`` calls in this module are
-    NOT suppressed.
+    RuntimeWarning and FutureWarning messages are suppressed while internal
+    computation runs; package UserWarning messages remain visible.
     """
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', RuntimeWarning)
@@ -77,12 +72,7 @@ def _m1_loocv(
     fixed_alpha: Optional[float] = None,
     groups: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, float, float, float]:
-    """TG 语义包装: 委托 cordiag.m1.m1_loocv, unseen_stratum 固定 'fallback'。
-
-    m1.py 的 unseen_stratum 是必填 keyword-only 参数 (禁止自动推断:
-    zPG 用 'skip', TG 用 'fallback')。本包装把 TG 语义固化, 保持 tg.py
-    历史调用签名 (不暴露 unseen_stratum) 不变 —— 仅换实现来源, 零语义变化。
-    """
+    """Run shared M1 LOOCV with the TG fallback policy for unseen strata."""
     return _m1_loocv_impl(
         P, X, strata, cv_alphas,
         eval_indices=eval_indices,
@@ -111,7 +101,7 @@ class TGResult:
     n_target: int
     size_ratio: float
     size_ratio_directional: float         # n_source / max(n_target, 1) — for asymmetry flag
-    size_ratio_symmetric: float           # Implementation detail.
+    size_ratio_symmetric: float           # max(n_source, n_target) / min(...) (>= 1)
 
     # TG_raw is the primary decision-scale effect and classification scale;
     # TG_log is its scale-free reporting and ranking companion.
@@ -133,7 +123,7 @@ class TGResult:
     permutation_p_raw: float
     permutation_p_design: float
     permutation_p_rna: float
-    interaction_pvalue: float = 1.0    # Approach A+: interaction p-value via condition-label restricted permutation (supplementary, report-only)
+    interaction_pvalue: float = 1.0    # condition-label permutation interaction P value (supplementary, report-only)
     ztg: float = 0.0                    # standardized TG_raw
     tg_log: float = 0.0                 # Reporting/ranking: log cross/within MSE
 
@@ -200,13 +190,9 @@ class TGEnsembleResult:
 # ═══════════════════════════════════════════════════════════════════
 # Low-level helpers
 # ═══════════════════════════════════════════════════════════════════
-# M1 共享原语已于 2026-08-01 集成到 cordiag/m1.py (见文件头 import):
-#   本模块的 _m1_loocv / _m1_train_test / _compute_stratum_means_loocv /
-#   _ridge_edf / _spearmanr 现在来自 m1.py (m1_loocv / m1_train_test /
-#   m0_stratum_means_loocv / ridge_edf / _spearmanr), 下划线前缀名字保留
-#   re-export 供 calibration.py 使用, 调用语义零变化。其余 helper
-#   (Cramér's V / JS divergence / Q² 系列 / permutation / bootstrap /
-#   interpretation) 仍为本模块私有, 不属于 m1 共享面。
+# Shared M1 primitives are imported above. TG-specific design diagnostics, Q²
+# estimators, permutation tests, bootstrap intervals, and interpretation rules
+# remain private to this module.
 
 def _compute_cramers_v(
     labels1: np.ndarray,
@@ -428,8 +414,8 @@ def _compute_q2_within_matched(
     if mse_stratum_b < 1e-10:
         # Degenerate stratum baseline — unify with the LOOCV path
         # (_compute_q2_within returns q2 = NaN here, not 0.0; 0.0 would look
-        # like a perfect Q² and poison TG_raw/TG_log; edge-case guard).
-        # mse_model_b stays 0.0 placeholder (no subsamples ran in this path).
+        # like a perfect Q² and distort TG_raw/TG_log).
+        # mse_model_b remains at its initialized zero because no subsamples ran.
         return np.nan, mse_stratum_b, 0.0, 0.0, 1.0
 
     mse_vals = []
@@ -528,7 +514,7 @@ def _compute_q2_cross_matched(
     seed: Optional[int] = None,
 ) -> Tuple[float, float]:
     """
-    Q² a→b with matched training size — Fix 5: subsample source.
+    Q² a→b with matched training size by subsampling the source cohort.
 
     Draws `train_size` samples from source, trains M1, predicts on ALL target.
     Repeated `n_subsamples` times. Averaged Q² is directly comparable to
@@ -577,15 +563,14 @@ def _compute_interaction_pvalue(
     cov_type: str = 'nonrobust',
 ) -> float:
     """
-    Approach A+: interaction p-value via condition-label restricted permutation.
+    Interaction P value via condition-label restricted permutation.
 
     Fits Y ~ Y_hat * condition as an OLS interaction model on a fixed
     train/test split, where Y_hat is the Ridge-predicted protein value from
     RNA (trained on the training fold only). Tests whether the interaction
     coefficient is zero.
 
-    Null distribution (2026-08-01 audit): condition
-    labels are permuted *within the test fold* — the train/test partition (the
+    Under the null, condition labels are permuted *within the test fold*. The train/test partition (the
     "fold structure") is kept fixed and the observed within-fold class sizes
     are preserved. Y_hat depends only on (X, P) of the training samples, never
     on condition labels, so under the interaction null the labels on the test
@@ -602,11 +587,8 @@ def _compute_interaction_pvalue(
     fewer than 10 valid permutations returns 1.0 (same n_valid < 10
     convention as _permutation_test_tg).
 
-    Replaces the bootstrap-resampling calibration (2026-08-01): resampling
-    the observed data with replacement preserves the very signal the test aims
-    to detect, so strong interactions can produce anti-power under resampling.
-    Label permutation is the standard
-    exact alternative and retains power for strong signals.
+    Resampling observed data with replacement would preserve the signal under
+    test. Label permutation instead provides the required exchangeable null.
 
     Parameters
     ----------
@@ -906,19 +888,25 @@ def _permutation_test_tg(
       3. Shuffle pooled samples (equivalent to shuffling condition labels
          under H0 exchangeability) with the partition positions held fixed
          (block-restricted: shuffle within groups when groups are provided)
-      4. Recompute full TG decomposition (raw + design + RNA) using LOOCV
-         for both within-b and crossed
+      4. Recompute the full TG decomposition (raw + design + RNA). In
+         matched mode, use the same matched within, transfer, and crossed
+         estimators as the observed statistic. In fallback mode, use the
+         null's LOOCV within, transfer, and crossed helpers described below
       5. Repeat n_permutations times
 
     Restricted permutation guarantees that every permutation uses the EXACT
     same train/test partition sizes and fold structure as the observed data —
     the permuted partitions cannot drift in size.
 
-    Permuted partitions are ALWAYS evaluated with LOOCV (cv_mode is ignored
-    in the null). matched_subsample CV is NOT used for permuted partitions:
-    its train/test split validity depends on the n_source vs n_target ratio,
-    and under permutation those splits collapse (too few holdout samples →
-    degenerate folds → most permutations invalid → p=1.0 for every pair).
+    In ``matched_subsample`` mode, every null realization uses the observed
+    matched training size and the same matched within, transfer, and crossed
+    estimators as the observed statistic. In fallback mode, the null uses
+    ``_compute_q2_within``, ``_compute_q2_cross``, and
+    ``_compute_q2_crossed``. The observed fallback path uses LOOCV for within
+    and crossed but retains ``_compute_q2_cross_matched`` for the transfer
+    arm; therefore estimator identity is asserted only for matched mode.
+    Partition positions and effective source/target sample counts remain
+    fixed in either mode.
 
     When `source_groups` and `target_groups` are provided, the permutation
     uses block-restricted permutation: samples are shuffled WITHIN each group.
@@ -940,18 +928,18 @@ def _permutation_test_tg(
         Patient/donor group IDs. When provided, block permutation within
         groups is used instead of global shuffle.
     cv_mode : str
-        'loocv' (default) or 'matched_subsample'. IGNORED in the null —
-        permuted partitions always use LOOCV (see above). Kept for API
-        compatibility with the observed computation.
+        'loocv' (default) or 'matched_subsample'. Selects the matched-null
+        contract or the explicitly documented fallback-null helpers above.
     n_subsamples : int
-        IGNORED in the null (LOOCV has no subsample repetitions). Kept for
-        API compatibility.
+        Number of matched-subsample repetitions per null realization in
+        ``matched_subsample`` mode; unused in LOOCV mode.
     n_source : int
-        IGNORED in the null (partition size is fixed by the restricted
-        permutation). Kept for API compatibility.
+        Legacy compatibility argument. The executable function derives the
+        effective fixed source-partition size from ``len(P_source)``; matched
+        training size is controlled by ``train_size``.
     matched_seed : int or None
-        IGNORED in the null (LOOCV has no random draws). Kept for API
-        compatibility.
+        Base seed for deterministic matched-subsample draws in the null;
+        unused in LOOCV mode.
 
     Returns
     -------
@@ -1499,9 +1487,7 @@ def _compute_tg_pair(
     size_ratio_symmetric = float(max(n_source, n_target) / max(min(n_source, n_target), 1))
 
     # Per-pair deterministic RNG (not from parent RNG)
-    # Single source of truth: cordiag.m1.derive_seed (md5 chain
-    # §4.1) — 原内联 md5 副本已删, 数值逐位一致 (工程审核实机验证:
-    # derive_seed('P1_a_b_B1') == 内联 md5 == 648016898)。
+    # Derive a stable, pair-specific seed from the shared M1 helper.
     per_pair_seed = derive_seed(f'{protein}_{source_cond}_{target_cond}_{batch}')
     pair_rng = np.random.default_rng(per_pair_seed)
 
@@ -1527,8 +1513,8 @@ def _compute_tg_pair(
     # Training size: match n_source when source is smaller, else use half of target.
     # Minimum train_size=8 prevents numerical catastrophe at n<16 where stratum
     # splits can produce degenerate (single-sample) strata within a subsample,
-    # causing StandardScaler to divide by zero and MSE to explode (Analysis #4).
-    # n_subsamples: passed from function parameter (default 100, dev: 20 for speed)
+    # causing StandardScaler to divide by zero and MSE to become unstable.
+    # n_subsamples is passed from the function parameter (default 100).
     train_size = min(n_source, max(n_target // 2, n_target - 10))  # match source, min 10 test
     if train_size >= 8 and n_target - train_size >= 3:
         cv_mode = 'matched_subsample'
@@ -1595,7 +1581,7 @@ def _compute_tg_pair(
     # Estimable: full TG computation
     # ═══════════════════════════════════════════════════════════════
 
-    # ── Q²_a→b: matched subsample (Fix 5) — subsample source to train_size ──
+    # Q²_a→b: subsample the source cohort to the matched training size.
     q2_a_to_b, mse_a_to_b = _compute_q2_cross_matched(
         P_source, X_source, source_strata,
         P_target, X_target, target_strata,
@@ -1696,7 +1682,7 @@ def _compute_tg_pair(
         matched_seed=per_pair_seed,
     )
 
-    # ── Approach A+: interaction p-value (supplementary, report-only column;
+    # Interaction P value (supplementary, report-only column;
     #    the decision significance test is the permutation test above) ──
     P_pooled = np.concatenate([P_source, P_target]).astype(np.float64)
     X_pooled = np.concatenate([X_source, X_target], axis=0).astype(np.float64)
@@ -2318,11 +2304,6 @@ def tg_ensemble_to_dataframe(ensemble: TGEnsembleResult) -> Dict[str, pd.DataFra
 # ═══════════════════════════════════════════════════════════════════
 # cordiag public API aliases
 # ═══════════════════════════════════════════════════════════════════
-# Private helpers are compatibility contracts for package-level callers.
-# import _compute_tg_pair / _apply_tg_fdr / tg_results_to_dataframe (带下划线,
-# 签名一个参数都不能变 — 本文件保持原名原签名原样)。public API aliases:
-#   compute_tg_pair  = _compute_tg_pair   (公开别名)
-#   apply_tg_fdr     = _apply_tg_fdr      (公开别名)
-# 两者指向同一函数对象, 数值行为完全相同。
+# Public aliases reference the same function objects as their private names.
 compute_tg_pair = _compute_tg_pair
 apply_tg_fdr = _apply_tg_fdr

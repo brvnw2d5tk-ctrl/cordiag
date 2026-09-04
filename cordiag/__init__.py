@@ -8,7 +8,7 @@ independently.
 
 from . import m1
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = ["m1", "zpg", "tg", "calibration", "cli"]
 
