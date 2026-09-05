@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3 - 2026-09-05
+
+- Added `tg_cross_study_residual` as the canonical descriptive name for the
+  second TG decomposition component; `tg_rna` remains available as a
+  deprecated compatibility alias.
+- Replaced causal RNA-coupling interpretation text with a cross-study residual
+  description that does not assign a biological or technical cause.
+- No TG numerical algorithm, decision rule, or frozen paper result changed.
+
 ## 0.1.2 - 2026-09-04
 
 - Corrected the TG restricted-permutation documentation to describe the

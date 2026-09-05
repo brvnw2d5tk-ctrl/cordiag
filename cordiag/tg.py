@@ -113,7 +113,7 @@ class TGResult:
     # Decomposed TG
     q2_crossed: float                 # Q² from pooled a+b training
     tg_design: float                  # Q²_within_b - Q²_crossed (stratum shift)
-    tg_rna: float                     # Q²_crossed - Q²_a_to_b (RNA coupling change)
+    tg_rna: float                     # Deprecated storage name for the cross-study residual
     tg_design_fraction: float         # tg_design / max(tg_raw, 1e-10)
 
     # Stratum baseline
@@ -145,7 +145,7 @@ class TGResult:
 
     # Interpretation
     interpretation_primary: str = ''  # TRANSPORTABLE | PARTIALLY | NON | NOT_ESTIMABLE
-    interpretation_secondary: str = ''  # STRATUM_SHIFT | RNA_COUPLING_CHANGE | MIXED | ...
+    interpretation_secondary: str = ''  # STRATUM_SHIFT | CROSS_STUDY_RESIDUAL | MIXED | ...
     interpretation_text: str = ''     # Human-readable summary
 
     # Repro
@@ -158,6 +158,15 @@ class TGResult:
     ridge_alpha_within_b: float = 1.0  # Alpha used for within-b LOOCV, passed to crossed
     cv_mode: str = 'loocv'            # 'matched_subsample' | 'loocv' — CV strategy for within-b
     n_subsamples: int = 0             # Number of subsample reps (0 when LOOCV)
+
+    @property
+    def tg_cross_study_residual(self) -> float:
+        """Return the descriptive cross-study residual.
+
+        ``tg_rna`` is retained as the stored field for backward compatibility.
+        Neither name assigns a biological or technical cause to the residual.
+        """
+        return self.tg_rna
 
 
 @dataclass
@@ -1279,7 +1288,7 @@ def _interpret_tg(
     Secondary (why?):
       Only if primary in {PARTIALLY, NON_TRANSPORTABLE}
       STRATUM_SHIFT         — TG_design_fraction > 0.6
-      RNA_COUPLING_CHANGE   — TG_design_fraction < 0.4
+      CROSS_STUDY_RESIDUAL  — TG_design_fraction < 0.4
       MIXED                 — 0.4 <= fraction <= 0.6
       WEAK_BASELINE         — weak baseline flag set
       SAMPLE_ASYMMETRY      — asymmetric flag set
@@ -1318,8 +1327,7 @@ def _interpret_tg(
         text = (
             f'RNA→protein relationship is unexpectedly helpful: source model predicts '
             f'target proteins BETTER than target model '
-            f'(TG_raw={tg_raw:.4f} < 0, p={permutation_p_raw:.4f}). '
-            f'This may indicate stratum shift artifact or shared regulatory program.'
+            f'(TG_raw={tg_raw:.4f} < 0, p={permutation_p_raw:.4f}).'
         )
         return primary, secondary, text
 
@@ -1345,7 +1353,7 @@ def _interpret_tg(
             if tg_design_fraction > 0.6:
                 secondary_parts.append('STRATUM_SHIFT')
             elif tg_design_fraction < 0.4:
-                secondary_parts.append('RNA_COUPLING_CHANGE')
+                secondary_parts.append('CROSS_STUDY_RESIDUAL')
             else:
                 secondary_parts.append('MIXED')
 
@@ -1373,9 +1381,10 @@ def _interpret_tg(
         if asymmetric:
             base += f'Sample sizes are asymmetric. '
         if 'STRATUM_SHIFT' in secondary:
-            base += 'Primary driver: stratum distribution shift (design effect). '
-        if 'RNA_COUPLING_CHANGE' in secondary:
-            base += 'Primary driver: genuine change in RNA→protein coupling. '
+            base += 'The stratum-shift component is the larger descriptive component. '
+        if 'CROSS_STUDY_RESIDUAL' in secondary:
+            base += ('The cross-study residual is the larger descriptive component; '
+                     'its cause is not identified. ')
         text = base.strip()
     elif primary == 'PARTIALLY_TRANSPORTABLE':
         base = (
@@ -1383,9 +1392,9 @@ def _interpret_tg(
             f'(TG_raw={tg_raw:.4f}, p={permutation_p_raw:.4f}). '
         )
         if 'STRATUM_SHIFT' in secondary:
-            base += 'Stratum shift is a contributing factor. '
-        if 'RNA_COUPLING_CHANGE' in secondary:
-            base += 'RNA coupling change is a contributing factor. '
+            base += 'The stratum-shift component contributes to the observed transfer gap. '
+        if 'CROSS_STUDY_RESIDUAL' in secondary:
+            base += 'The cross-study residual contributes to the observed transfer gap. '
         text = base.strip()
     else:
         text = 'NOT_ESTIMABLE — insufficient data or failed quality gates.'
@@ -2220,7 +2229,8 @@ def tg_results_to_dataframe(
                 'tg_relative': round(tg.tg_relative, 4),
                 'q2_crossed': round(tg.q2_crossed, 4),
                 'tg_design': round(tg.tg_design, 6),
-                'tg_rna': round(tg.tg_rna, 6),
+                'tg_cross_study_residual': round(tg.tg_cross_study_residual, 6),
+                'tg_rna': round(tg.tg_rna, 6),  # Deprecated compatibility alias
                 'tg_design_fraction': round(tg.tg_design_fraction, 4),
                 'mse_stratum_b': round(tg.mse_stratum_b, 6),
                 'permutation_p_raw': round(tg.permutation_p_raw, 4),

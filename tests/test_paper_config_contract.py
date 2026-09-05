@@ -43,14 +43,14 @@ def test_cli_rejects_unknown_config_keys_instead_of_silently_ignoring_them(comma
         cli.validated_parameters(command, {"permutations": 1000})
 
 
-def test_release_metadata_is_fixed_at_0_1_2():
+def test_release_metadata_is_fixed_at_0_1_3():
     pyproject = (PUBLIC_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     citation = (PUBLIC_ROOT / "CITATION.cff").read_text(encoding="utf-8")
 
-    assert re.search(r'^version = "0\.1\.2"$', pyproject, flags=re.MULTILINE)
-    assert re.search(r"^version: 0\.1\.2$", citation, flags=re.MULTILINE)
-    assert re.search(r"^date-released: 2026-09-04$", citation, flags=re.MULTILINE)
-    assert __import__("cordiag").__version__ == "0.1.2"
+    assert re.search(r'^version = "0\.1\.3"$', pyproject, flags=re.MULTILINE)
+    assert re.search(r"^version: 0\.1\.3$", citation, flags=re.MULTILINE)
+    assert re.search(r"^date-released: 2026-09-05$", citation, flags=re.MULTILINE)
+    assert __import__("cordiag").__version__ == "0.1.3"
 
 
 def test_readme_separates_fast_demo_paper_settings_and_controlled_data():

@@ -158,7 +158,7 @@ class TGSimResult:
     q2_crossed: float = float('nan')
     tg_raw: float = float('nan')
     tg_design: float = float('nan')
-    tg_rna: float = float('nan')
+    tg_rna: float = float('nan')  # Deprecated storage name for the cross-study residual
     tg_relative: float = float('nan')
     tg_design_fraction: float = float('nan')
     mse_stratum_b: float = float('nan')
@@ -175,6 +175,11 @@ class TGSimResult:
 
     # Transparency for calibration
     scenario_group: str = ''  # 'null_identical' | 'transportable' | 'non_transportable' | 'asymmetry' | 'high_dim' | 'realistic'
+
+    @property
+    def tg_cross_study_residual(self) -> float:
+        """Return the descriptive cross-study residual without assigning cause."""
+        return self.tg_rna
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -701,7 +706,8 @@ def summarize_reps(results: List[TGSimResult]) -> pd.DataFrame:
             'n_batches': cfg.n_batches if cfg else 2,
             'tg_raw': r.tg_raw,
             'tg_design': r.tg_design,
-            'tg_rna': r.tg_rna,
+            'tg_cross_study_residual': r.tg_cross_study_residual,
+            'tg_rna': r.tg_rna,  # Deprecated compatibility alias
             'tg_relative': r.tg_relative,
             'tg_design_fraction': r.tg_design_fraction,
             'q2_within_b': r.q2_within_b,
@@ -757,7 +763,12 @@ def evaluate_simulation(summary_df: pd.DataFrame) -> pd.DataFrame:
 
         tg_raw = grp['tg_raw'].dropna().values
         tg_design = grp['tg_design'].dropna().values
-        tg_rna = grp['tg_rna'].dropna().values
+        residual_column = (
+            'tg_cross_study_residual'
+            if 'tg_cross_study_residual' in grp.columns
+            else 'tg_rna'
+        )
+        tg_rna = grp[residual_column].dropna().values
         delta_rho = grp['delta_rho_true'].dropna().values
 
         row['n_reps'] = len(tg_raw)
@@ -770,7 +781,8 @@ def evaluate_simulation(summary_df: pd.DataFrame) -> pd.DataFrame:
             row['tg_raw_p99'] = float(np.percentile(tg_raw, 99))
             row['tg_raw_max'] = float(np.max(tg_raw))
             row['tg_design_mean'] = float(np.mean(tg_design))
-            row['tg_rna_mean'] = float(np.mean(tg_rna))
+            row['tg_cross_study_residual_mean'] = float(np.mean(tg_rna))
+            row['tg_rna_mean'] = row['tg_cross_study_residual_mean']
             row['delta_rho_mean'] = float(np.mean(delta_rho))
         else:
             row['tg_raw_mean'] = float('nan')
@@ -781,6 +793,7 @@ def evaluate_simulation(summary_df: pd.DataFrame) -> pd.DataFrame:
             row['tg_raw_p99'] = float('nan')
             row['tg_raw_max'] = float('nan')
             row['tg_design_mean'] = float('nan')
+            row['tg_cross_study_residual_mean'] = float('nan')
             row['tg_rna_mean'] = float('nan')
             row['delta_rho_mean'] = float('nan')
 

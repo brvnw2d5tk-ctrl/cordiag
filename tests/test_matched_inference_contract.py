@@ -4,6 +4,31 @@ import pandas as pd
 from cordiag import calibration, tg, zpg
 
 
+def test_cross_study_residual_name_preserves_legacy_alias_without_causal_text():
+    result = object.__new__(tg.TGResult)
+    result.tg_rna = 1.25
+    assert result.tg_cross_study_residual == 1.25
+
+    primary, secondary, text = tg._interpret_tg(
+        estimable=True,
+        weak_baseline=False,
+        asymmetric=False,
+        tg_raw=4.0,
+        q2_within_b=0.2,
+        permutation_p_raw=0.01,
+        tg_design_fraction=0.2,
+        theta=1.0,
+    )
+    assert primary == "NON_TRANSPORTABLE"
+    assert secondary == "CROSS_STUDY_RESIDUAL"
+    assert "cause is not identified" in text
+    assert "genuine change" not in text
+
+    simulation = calibration.TGSimResult(config=calibration.TGSimConfig())
+    simulation.tg_rna = 2.5
+    assert simulation.tg_cross_study_residual == 2.5
+
+
 def test_zpg_upper_tail_pvalue_uses_only_valid_null_draws():
     null = np.array([-0.1, 0.0, 0.1, 0.2, np.nan])
 

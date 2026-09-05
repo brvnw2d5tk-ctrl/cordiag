@@ -1,8 +1,8 @@
 cff-version: 1.2.0
 message: "If you use cordiag, please cite this software release."
 title: "cordiag"
-version: 0.1.2
-date-released: 2026-09-04
+version: 0.1.3
+date-released: 2026-09-05
 authors:
   - family-names: Gong
     given-names: Zhuozhi
